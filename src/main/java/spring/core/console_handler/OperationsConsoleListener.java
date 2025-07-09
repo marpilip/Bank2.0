@@ -2,13 +2,11 @@ package spring.core.console_handler;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import spring.core.Account;
-import spring.core.User;
 import spring.core.services.AccountService;
 import spring.core.services.UserService;
 
 import java.util.HashMap;
-import java.util.List;
+
 import java.util.Map;
 import java.util.Scanner;
 

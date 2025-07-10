@@ -73,6 +73,10 @@ public class OperationsConsoleListener implements Runnable {
 
     private void printHelp() {
         System.out.println("Доступные команды:");
-        commandMap.keySet().forEach(System.out::println);
+        commandMap.values().forEach(cmd ->
+                System.out.printf("%s - %s%n",
+                        cmd.getOperationType().name(),
+                        cmd.getDescription())
+        );
     }
 }

@@ -9,8 +9,4 @@ public interface Command {
     void execute(Scanner scanner, UserService userService, AccountService accountService);
     BankOperationType getOperationType();
     String getDescription();
-
-    default String getName() {
-        return getOperationType().toString();
-    }
 }

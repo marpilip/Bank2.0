@@ -7,6 +7,10 @@ import java.util.Scanner;
 
 public interface Command {
     void execute(Scanner scanner, UserService userService, AccountService accountService);
-    String getName();
+    BankOperationType getOperationType();
     String getDescription();
+
+    default String getName() {
+        return getOperationType().toString();
+    }
 }

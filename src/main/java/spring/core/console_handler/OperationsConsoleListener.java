@@ -1,32 +1,34 @@
 package spring.core.console_handler;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import spring.core.services.AccountService;
 import spring.core.services.UserService;
 
-import java.util.HashMap;
-
+import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Component
 public class OperationsConsoleListener implements Runnable {
     private final UserService userService;
     private final AccountService accountService;
     private final Scanner scanner;
-    private final Map<String, Command> commands;
+    private final Map<String, Command> commandMap;
 
-    @Autowired
-    public OperationsConsoleListener(UserService userService, AccountService accountService) {
+    public OperationsConsoleListener(
+            List<Command> commands,
+            UserService userService,
+            AccountService accountService) {
+        this.scanner = new Scanner(System.in);
         this.userService = userService;
         this.accountService = accountService;
-        this.scanner = new Scanner(System.in);
-        this.commands = new HashMap<>();
-
-        for (BankCommand cmd : BankCommand.values()) {
-            commands.put(cmd.getName(), cmd);
-        }
+        this.commandMap = commands.stream()
+                .collect(Collectors.toMap(
+                        cmd -> cmd.getOperationType().name(),
+                        Function.identity()
+                ));
     }
 
     @Override
@@ -47,7 +49,7 @@ public class OperationsConsoleListener implements Runnable {
                     break;
                 }
 
-                Command cmd = commands.get(command);
+                Command cmd = commandMap.get(command);
                 if (cmd == null) {
                     System.out.println("Неизвестная команда. Введите 'HELP' для списка команд.");
                     continue;
@@ -70,7 +72,7 @@ public class OperationsConsoleListener implements Runnable {
     }
 
     private void printHelp() {
-        commands.values().forEach(cmd ->
-                System.out.printf("%s - %s\n", cmd.getName(), cmd.getDescription()));
+        System.out.println("Доступные команды:");
+        commandMap.keySet().forEach(System.out::println);
     }
 }

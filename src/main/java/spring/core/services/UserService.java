@@ -1,50 +1,98 @@
 package spring.core.services;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.Transaction;
+import org.hibernate.query.Query;
+
 import org.springframework.stereotype.Service;
+import spring.core.Account;
 import spring.core.User;
-import spring.core.exceptions.BankException;
 import spring.core.exceptions.UserAlreadyExistsException;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class UserService {
-    private final Map<Long, User> users = new HashMap<>();
-    private final AtomicLong idGenerator = new AtomicLong(1);
-    private final AccountService accountService;
+    private final SessionFactory sessionFactory;
 
-    @Autowired
-    public UserService(@Lazy AccountService accountService) {
-        this.accountService = accountService;
+    public UserService(SessionFactory sessionFactory) {
+        this.sessionFactory = sessionFactory;
     }
 
     public User createUser(String login) {
+
+        Transaction transaction = null;
+        User user;
         if (login == null || login.trim().isEmpty()) {
             throw new IllegalArgumentException("Строка пуста. Введите логин пользователя.");
         }
+        try (Session session = sessionFactory.getCurrentSession()) {
+            transaction = session.beginTransaction();
 
-        if (users.values().stream().anyMatch(u -> u.getLogin().equals(login))) {
-            throw new UserAlreadyExistsException(login);
+            user = new User(login);
+            Query<User> query = session.createQuery("FROM User WHERE login = :login", User.class);
+            query.setParameter("login", login);
+
+            if (!query.getResultList().isEmpty()) {
+                throw new UserAlreadyExistsException(login);
+            }
+
+            session.persist(user);
+
+            Account account = new Account();
+            user.addAccount(account);
+            session.persist(account);
+
+            transaction.commit();
+
+            return user;
+        } catch (Exception e) {
+            if (transaction != null) {
+                transaction.rollback();
+            }
+
+            throw new RuntimeException("Ошибка при создании пользователя ", e);
         }
-
-        Long userId = idGenerator.getAndIncrement();
-        User user = new User(userId, login);
-        users.put(userId, user);
-
-        accountService.createAccount(userId);
-
-        return user;
     }
 
     public List<User> getAllUsers() {
-        return new ArrayList<>(users.values());
+        Session session;
+        Transaction transaction = null;
+        List<User> users;
+
+        try {
+            session = sessionFactory.getCurrentSession();
+            transaction = session.beginTransaction();
+
+            users = sessionFactory.getCurrentSession()
+                    .createQuery("FROM User u LEFT JOIN FETCH u.accounts", User.class)
+                    .getResultList();
+
+            transaction.commit();
+        } catch (Exception e) {
+            if (transaction != null) {
+                transaction.rollback();
+            }
+
+            throw new RuntimeException("Ошибка при получении списка пользователей ", e);
+        }
+
+        return users;
+
     }
 
     public User getUserById(Long id) {
-        return Optional.ofNullable(users.get(id))
-                .orElseThrow(()-> new BankException("Пользователь с таким логином не найден"));
+        Session session = sessionFactory.getCurrentSession();
+
+        try {
+            session.beginTransaction();
+            User user = session.find(User.class, id);
+            session.getTransaction().commit();
+            return user;
+        } catch (Exception e) {
+            session.getTransaction().rollback();
+            throw new RuntimeException("Произошла проблема при поиске пользователя", e);
+        }
     }
 }

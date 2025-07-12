@@ -1,21 +1,32 @@
 package spring.core;
 
+import jakarta.persistence.*;
+
 import java.util.ArrayList;
 import java.util.List;
 
+@Entity
+@Table(name = "users")
 public class User {
-    private final Long id;
-    private final String login;
-    private final List<Account> accountList;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-    public User(Long id, String login) {
-        this.id = id;
+    @Column(nullable = false, unique = true)
+    private String login;
+
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    private final List<Account> accounts = new ArrayList<>();
+
+    public User() {}
+
+    public User(String login) {
         this.login = login;
-        this.accountList = new ArrayList<>();
     }
 
     public void addAccount(Account account) {
-        accountList.add(account);
+        accounts.add(account);
+        account.setUser(this);
     }
 
     public Long getId() {
@@ -27,6 +38,6 @@ public class User {
     }
 
     public List<Account> getAccountList() {
-        return accountList;
+        return accounts;
     }
 }

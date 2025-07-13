@@ -3,10 +3,8 @@ package spring.core.services;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.Transaction;
-import org.hibernate.query.Query;
 
 import org.springframework.stereotype.Service;
-import spring.core.Account;
 import spring.core.User;
 import spring.core.exceptions.UserAlreadyExistsException;
 
@@ -15,45 +13,38 @@ import java.util.*;
 @Service
 public class UserService {
     private final SessionFactory sessionFactory;
+    private final TransactionHelper transactionHelper;
+    private final AccountService accountService;
 
-    public UserService(SessionFactory sessionFactory) {
+    public UserService(SessionFactory sessionFactory, TransactionHelper transactionHelper,
+                       AccountService accountService) {
         this.sessionFactory = sessionFactory;
+        this.transactionHelper = transactionHelper;
+        this.accountService = accountService;
     }
 
     public User createUser(String login) {
+        return transactionHelper.doInTransaction(session -> {
+            if (login == null || login.trim().isEmpty()) {
+                throw new IllegalArgumentException("Строка пуста. Введите логин пользователя.");
+            }
 
-        Transaction transaction = null;
-        User user;
-        if (login == null || login.trim().isEmpty()) {
-            throw new IllegalArgumentException("Строка пуста. Введите логин пользователя.");
-        }
-        try (Session session = sessionFactory.getCurrentSession()) {
-            transaction = session.beginTransaction();
+            boolean isLoginExists = session.createQuery(
+                            "SELECT count(u) > 0 FROM User u WHERE u.login = :login", Boolean.class)
+                    .setParameter("login", login)
+                    .getSingleResult();
 
-            user = new User(login);
-            Query<User> query = session.createQuery("FROM User WHERE login = :login", User.class);
-            query.setParameter("login", login);
-
-            if (!query.getResultList().isEmpty()) {
+            if (isLoginExists) {
                 throw new UserAlreadyExistsException(login);
             }
 
+            User user = new User(login);
             session.persist(user);
 
-            Account account = new Account();
-            user.addAccount(account);
-            session.persist(account);
-
-            transaction.commit();
+            accountService.createAccount(user.getId(), session);
 
             return user;
-        } catch (Exception e) {
-            if (transaction != null) {
-                transaction.rollback();
-            }
-
-            throw new RuntimeException("Ошибка при создании пользователя ", e);
-        }
+        });
     }
 
     public List<User> getAllUsers() {

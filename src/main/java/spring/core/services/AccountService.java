@@ -1,8 +1,6 @@
 package spring.core.services;
 
 import org.hibernate.Session;
-import org.hibernate.SessionFactory;
-import org.hibernate.Transaction;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -12,7 +10,7 @@ import spring.core.exceptions.*;
 
 @Service
 public class AccountService {
-    private final SessionFactory sessionFactory;
+    private final TransactionHelper transactionHelper;
 
     @Value("${account.default-amount}")
     private Double defaultAmount;
@@ -21,31 +19,35 @@ public class AccountService {
     private Double transferCommission;
 
     @Autowired
-    public AccountService(SessionFactory sessionFactory) {
-        this.sessionFactory = sessionFactory;
+    public AccountService(TransactionHelper transactionHelper) {
+        this.transactionHelper = transactionHelper;
     }
 
     public Account createAccount(Long userId) {
-        Session session;
-        Transaction transaction = null;
-
-        try {
-            session = sessionFactory.getCurrentSession();
-            transaction = session.beginTransaction();
+        return transactionHelper.doInTransaction(session -> {
             User user = session.find(User.class, userId);
+
+            if (user == null) {
+                throw new UserNotFoundException(userId);
+            }
+
             Account account = new Account(defaultAmount);
             user.addAccount(account);
             session.persist(account);
-            transaction.commit();
-
             return account;
-        } catch (Exception e) {
-            if (transaction != null) {
-                transaction.rollback();
-            }
+        });
+    }
 
-            throw new RuntimeException(e);
+    public void createAccount(Long userId, Session session) {
+        User user = session.find(User.class, userId);
+
+        if (user == null) {
+            throw new UserNotFoundException(userId);
         }
+
+        Account account = new Account(defaultAmount);
+        user.addAccount(account);
+        session.persist(account);
     }
 
     public void deposit(Long accountId, Double amount) {
@@ -53,29 +55,15 @@ public class AccountService {
             throw new InvalidAmountException(amount);
         }
 
-        Session session;
-        Transaction transaction = null;
-
-        try {
-            session = sessionFactory.getCurrentSession();
-            transaction = session.beginTransaction();
-
+        transactionHelper.doInTransaction(session -> {
             Account account = session.find(Account.class, accountId);
-
             if (account == null) {
                 throw new AccountNotFoundException(accountId);
             }
 
             account.setMoneyAmount(account.getMoneyAmount() + amount);
-            transaction.commit();
-        } catch (Exception e) {
-            if (transaction != null) {
-                transaction.rollback();
-            }
-
-            throw new RuntimeException("Ошибка при пополнении счета", e);
-        }
-
+            return account;
+        });
     }
 
     public void withdraw(Long accountId, Double amount) {
@@ -83,26 +71,15 @@ public class AccountService {
             throw new InvalidAmountException(amount);
         }
 
-        Session session;
-        Transaction transaction = null;
-
-        try {
-            session = sessionFactory.getCurrentSession();
-            transaction = session.beginTransaction();
+        transactionHelper.doInTransaction(session -> {
             Account account = session.find(Account.class, accountId);
-            if (account.getMoneyAmount() < amount) {
-                throw new InsufficientFundsException(accountId, amount);
+            if (account == null) {
+                throw new AccountNotFoundException(accountId);
             }
 
             account.setMoneyAmount(account.getMoneyAmount() - amount);
-            transaction.commit();
-        } catch (Exception e) {
-            if (transaction != null) {
-                transaction.rollback();
-            }
-
-            throw new RuntimeException("Ошибка при снятии со счета", e);
-        }
+            return account;
+        });
     }
 
     public void transferMoney(Long fromAccountId, Long toAccountId, Double amount) {
@@ -110,14 +87,16 @@ public class AccountService {
             throw new InvalidAmountException(amount);
         }
 
-        Session session;
-        Transaction transaction = null;
-
-        try {
-            session = sessionFactory.getCurrentSession();
-            transaction = session.beginTransaction();
-            Account toAccount = session.find(Account.class, toAccountId);
+        transactionHelper.doInTransaction(session -> {
             Account fromAccount = session.find(Account.class, fromAccountId);
+            Account toAccount = session.find(Account.class, toAccountId);
+            if (fromAccount == null) {
+                throw new AccountNotFoundException(fromAccountId);
+            }
+
+            if (toAccount == null) {
+                throw new AccountNotFoundException(toAccountId);
+            }
 
             boolean isExternalTransfer = !fromAccount.getUser().getId().equals(toAccount.getUser().getId());
             Double commission = isExternalTransfer ?
@@ -132,27 +111,13 @@ public class AccountService {
             fromAccount.setMoneyAmount(fromAccount.getMoneyAmount() - totalAmount);
             toAccount.setMoneyAmount(toAccount.getMoneyAmount() + totalAmount);
 
-            transaction.commit();
-        } catch (Exception e) {
-            if (transaction != null) {
-                transaction.rollback();
-            }
-
-            throw new RuntimeException("Ошибка при переводе со счета на счет", e);
-        }
-
+            return toAccount;
+        });
     }
 
     public void closeAccount(Long accountId) {
-        Session session;
-        Transaction transaction = null;
-
-        try {
-            session = sessionFactory.getCurrentSession();
-            transaction = session.beginTransaction();
-
+        transactionHelper.doInTransaction(session -> {
             Account account = session.find(Account.class, accountId);
-
             if (account == null) {
                 throw new AccountNotFoundException(accountId);
             }
@@ -171,33 +136,21 @@ public class AccountService {
 
             transferMoney(accountId, targetAccount.getId(), account.getMoneyAmount());
 
-            transaction.commit();
             session.remove(accountId);
             user.getAccountList().remove(account);
-        } catch (Exception e) {
-            throw new BankException("Ошибка при закрытии счета");
-        }
+
+            return user;
+        });
     }
 
     public void searchAccountById(Long accountId) {
-        Session session;
-        Transaction transaction = null;
-
-        try {
-            session = sessionFactory.getCurrentSession();
-            transaction = session.beginTransaction();
+        transactionHelper.doInTransaction(session -> {
             Account account = session.find(Account.class, accountId);
-
             if (account == null) {
                 throw new AccountNotFoundException(accountId);
             }
 
-            transaction.commit();
-        } catch (Exception e) {
-            if (transaction != null) {
-                transaction.rollback();
-            }
-            throw new RuntimeException("Ошибка при поиске счета", e);
-        }
+            return account;
+        });
     }
 }

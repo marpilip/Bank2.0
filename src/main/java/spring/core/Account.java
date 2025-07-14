@@ -1,22 +1,37 @@
 package spring.core;
 
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "accounts")
 public class Account {
-    private final Long id;
-    private final Long userId;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "money_amount", nullable = false)
     private Double moneyAmount;
 
-    public Account(Long id, Long userId, Double moneyAmount) {
-        this.id = id;
-        this.userId = userId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    public Account(Double moneyAmount) {
         this.moneyAmount = moneyAmount;
     }
+
+    public Account() {}
 
     public Long getId() {
         return id;
     }
 
-    public Long getUserId() {
-        return userId;
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
     }
 
     public Double getMoneyAmount() {

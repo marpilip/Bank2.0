@@ -1,5 +1,6 @@
 package spring.core.services;
 
+import org.hibernate.Session;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -7,16 +8,9 @@ import spring.core.Account;
 import spring.core.User;
 import spring.core.exceptions.*;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
-
 @Service
 public class AccountService {
-    private final Map<Long, Account> accounts = new HashMap<>();
-    private final AtomicLong idGenerator = new AtomicLong(1);
-    private final UserService userService;
+    private final TransactionHelper transactionHelper;
 
     @Value("${account.default-amount}")
     private Double defaultAmount;
@@ -25,27 +19,35 @@ public class AccountService {
     private Double transferCommission;
 
     @Autowired
-    public AccountService(UserService userService) {
-        this.userService = userService;
+    public AccountService(TransactionHelper transactionHelper) {
+        this.transactionHelper = transactionHelper;
     }
 
     public Account createAccount(Long userId) {
-        User user = userService.getUserById(userId);
+        return transactionHelper.doInTransaction(session -> {
+            User user = session.find(User.class, userId);
 
-        Account account = new Account(
-                generateAccountId(),
-                userId,
-                defaultAmount
-        );
+            if (user == null) {
+                throw new UserNotFoundException(userId);
+            }
 
-        accounts.put(account.getId(), account);
-        user.addAccount(account);
-
-        return account;
+            Account account = new Account(defaultAmount);
+            user.addAccount(account);
+            session.persist(account);
+            return account;
+        });
     }
 
-    private Long generateAccountId() {
-        return idGenerator.getAndIncrement();
+    public void createAccount(Long userId, Session session) {
+        User user = session.find(User.class, userId);
+
+        if (user == null) {
+            throw new UserNotFoundException(userId);
+        }
+
+        Account account = new Account(defaultAmount);
+        user.addAccount(account);
+        session.persist(account);
     }
 
     public void deposit(Long accountId, Double amount) {
@@ -53,8 +55,15 @@ public class AccountService {
             throw new InvalidAmountException(amount);
         }
 
-        Account account = accounts.get(accountId);
-        account.setMoneyAmount(account.getMoneyAmount() + amount);
+        transactionHelper.doInTransaction(session -> {
+            Account account = session.find(Account.class, accountId);
+            if (account == null) {
+                throw new AccountNotFoundException(accountId);
+            }
+
+            account.setMoneyAmount(account.getMoneyAmount() + amount);
+            return account;
+        });
     }
 
     public void withdraw(Long accountId, Double amount) {
@@ -62,13 +71,15 @@ public class AccountService {
             throw new InvalidAmountException(amount);
         }
 
-        Account account = accounts.get(accountId);
+        transactionHelper.doInTransaction(session -> {
+            Account account = session.find(Account.class, accountId);
+            if (account == null) {
+                throw new AccountNotFoundException(accountId);
+            }
 
-        if (account.getMoneyAmount() < amount) {
-            throw new InsufficientFundsException(accountId, amount);
-        }
-
-        account.setMoneyAmount(account.getMoneyAmount() - amount);
+            account.setMoneyAmount(account.getMoneyAmount() - amount);
+            return account;
+        });
     }
 
     public void transferMoney(Long fromAccountId, Long toAccountId, Double amount) {
@@ -76,53 +87,70 @@ public class AccountService {
             throw new InvalidAmountException(amount);
         }
 
-        Account fromAccount = accounts.get(fromAccountId);
-        Account toAccount = accounts.get(toAccountId);
+        transactionHelper.doInTransaction(session -> {
+            Account fromAccount = session.find(Account.class, fromAccountId);
+            Account toAccount = session.find(Account.class, toAccountId);
+            if (fromAccount == null) {
+                throw new AccountNotFoundException(fromAccountId);
+            }
 
-        boolean isExternalTransfer = !fromAccount.getUserId().equals(toAccount.getUserId());
-        Double commission = isExternalTransfer ?
-                amount * transferCommission / 100 : 0;
+            if (toAccount == null) {
+                throw new AccountNotFoundException(toAccountId);
+            }
 
-        double totalAmount = amount + commission;
+            boolean isExternalTransfer = !fromAccount.getUser().getId().equals(toAccount.getUser().getId());
+            Double commission = isExternalTransfer ?
+                    amount * transferCommission / 100 : 0;
 
-        if (totalAmount > fromAccount.getMoneyAmount()) {
-            throw new InsufficientFundsException(fromAccountId, fromAccount.getMoneyAmount());
-        }
+            double totalAmount = amount + commission;
 
-        fromAccount.setMoneyAmount(fromAccount.getMoneyAmount() - totalAmount);
-        toAccount.setMoneyAmount(toAccount.getMoneyAmount() + totalAmount);
+            if (totalAmount > fromAccount.getMoneyAmount()) {
+                throw new InsufficientFundsException(fromAccountId, fromAccount.getMoneyAmount());
+            }
+
+            fromAccount.setMoneyAmount(fromAccount.getMoneyAmount() - totalAmount);
+            toAccount.setMoneyAmount(toAccount.getMoneyAmount() + totalAmount);
+
+            return toAccount;
+        });
     }
 
     public void closeAccount(Long accountId) {
-        Account account = Optional.ofNullable(accounts.get(accountId))
-                .orElseThrow(() -> new AccountNotFoundException(accountId));
-
-        User user = userService.getUserById(account.getUserId());
-
-        if (user.getAccountList().size() <= 1) {
-            throw new LastAccountException(account.getUserId());
-        }
-
-        Account targetAccount = user.getAccountList().stream()
-                .filter(a -> !a.getId().equals(accountId))
-                .findFirst()
-                .orElseThrow(() -> new AccountNotFoundException(accountId));
-
-        synchronized (this) {
-            try {
-                transferMoney(accountId, targetAccount.getId(), account.getMoneyAmount());
-
-                accounts.remove(accountId);
-                user.getAccountList().remove(account);
-
-            } catch (Exception e) {
-                throw new BankException("Ошибка при закрытии счета");
+        transactionHelper.doInTransaction(session -> {
+            Account account = session.find(Account.class, accountId);
+            if (account == null) {
+                throw new AccountNotFoundException(accountId);
             }
-        }
+
+            User user = session.find(User.class, account.getUser().getId());
+
+            if (user.getAccountList().size() <= 1) {
+                throw new LastAccountException(account.getUser().getId());
+            }
+
+            Account targetAccount = user.getAccountList().stream()
+                    .filter(a -> !a.getId().equals(accountId))
+                    .findFirst()
+                    .orElseThrow(() -> new AccountNotFoundException(accountId));
+
+
+            transferMoney(accountId, targetAccount.getId(), account.getMoneyAmount());
+
+            session.remove(accountId);
+            user.getAccountList().remove(account);
+
+            return user;
+        });
     }
 
     public void searchAccountById(Long accountId) {
-        Optional.ofNullable(accounts.get(accountId))
-                .orElseThrow(() -> new AccountNotFoundException(accountId));
+        transactionHelper.doInTransaction(session -> {
+            Account account = session.find(Account.class, accountId);
+            if (account == null) {
+                throw new AccountNotFoundException(accountId);
+            }
+
+            return account;
+        });
     }
 }
